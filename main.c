@@ -50,6 +50,26 @@ int event_sequence_init(struct event_sequence *seq) {
     return 0;
 }
 
+int event_sequence_free(struct event_sequence *seq) {
+    
+    if(seq == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    struct event *current = seq->head;
+
+    while(current != NULL) {
+        struct event *next = current->next_event;
+        free(current);
+        current = next;
+    }
+    
+    seq->head = seq->tail = NULL;
+    
+    return 0;
+}
+
 int event_sequence_add_tail(struct event_sequence *seq, const struct event *ev) {
     if(seq == NULL) return -1;
     
@@ -126,28 +146,44 @@ int main(int argc, char *argv[]) {
         
         if (ret == LIBEVDEV_READ_STATUS_SUCCESS) {
             timespec_get(&now, TIME_UTC);
+            
             currentEvent->delay.tv_sec = now.tv_sec - start.tv_sec;
             currentEvent->delay.tv_nsec = now.tv_nsec - start.tv_nsec;
+            if (currentEvent->delay.tv_nsec < 0) {
+                currentEvent->delay.tv_sec--;
+                currentEvent->delay.tv_nsec += 1000000000;
+            }
+            
             if(event_sequence_add_tail(&events, currentEvent) == -1) {
                 perror("Error happened while saving the event to linked list");
                 exit(EXIT_FAILURE);
             }
-            printf("Successfully read event %d\n", i);
+            printf("Successfully read event %d\n", i+1);
         }
     }
+    
+    free(currentEvent);
+    
+    libevdev_free(inputDevice);
+    close(inputfd);
     
     sleep(1);
     
     currentEvent = events.head;
     
-    for(int i = 0; i < 99 && currentEvent != NULL; i++) {
+    for(int i = 0; currentEvent != NULL; i++) {
         
         printf("\nWaiting for the next event delay to end so as to recall the next event\n");
-        sleep(currentEvent->delay.tv_sec);
-        sleep(currentEvent->delay.tv_nsec);
+        struct timespec sleep_time = {
+            .tv_sec = currentEvent->delay.tv_sec,
+            .tv_nsec = currentEvent->delay.tv_nsec
+        };
+        nanosleep(&sleep_time, NULL);
         
-        printf("Recalling the event:\n\ttype: %u(%s)\n\tcode: %u(%s)\n\tvalue: %i(%s)\n\tdelay seconds: %d\n\tdelay nanoseconds: %d\n\n", currentEvent->event.type, libevdev_event_type_get_name(currentEvent->event.type), currentEvent->event.code, libevdev_event_code_get_name(currentEvent->event.type, currentEvent->event.code), currentEvent->event.value, libevdev_event_value_get_name(currentEvent->event.type, currentEvent->event.code, currentEvent->event.value), currentEvent->delay.tv_sec, currentEvent->delay.tv_nsec);
+        printf("Recalling the event number %i:\n\ttype: %u(%s)\n\tcode: %u(%s)\n\tvalue: %i(%s)\n\tdelay seconds: %d\n\tdelay nanoseconds: %d\n\n", i+1, currentEvent->event.type, libevdev_event_type_get_name(currentEvent->event.type), currentEvent->event.code, libevdev_event_code_get_name(currentEvent->event.type, currentEvent->event.code), currentEvent->event.value, libevdev_event_value_get_name(currentEvent->event.type, currentEvent->event.code, currentEvent->event.value), currentEvent->delay.tv_sec, currentEvent->delay.tv_nsec);
         currentEvent = currentEvent->next_event;
     }
+
     
+    event_sequence_free(&events);
 }
