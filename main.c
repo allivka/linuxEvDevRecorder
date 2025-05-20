@@ -10,6 +10,8 @@
 #include <stdbool.h>
 #include <errno.h>
 
+#define MAX_EVENTS 99
+
 struct event {
     struct input_event event;
     struct timespec delay;
@@ -21,72 +23,73 @@ struct event_sequence {
     struct event *tail;
 };
 
-int event_init(struct event *ev, const struct input_event *input_ev, 
-                const struct timespec *delay_time, struct event *next) {
-    if (ev == NULL) return -1;
-    
-    if (input_ev != NULL) {
-        ev->event = *input_ev;
-    } else {
-        memset(&ev->event, 0, sizeof(struct input_event));
+int event_init(struct event *ev, const struct input_event *input_ev, const struct timespec *delay_time, struct event *next) {
+    if (ev == NULL) {
+        errno = EINVAL;
+        return -1;
     }
     
+    memset(&ev->event, 0, sizeof(struct input_event));
+    if (input_ev != NULL) {
+        ev->event = *input_ev;
+    }
+    
+    memset(&ev->delay, 0, sizeof(struct timespec));
     if (delay_time != NULL) {
         ev->delay = *delay_time;
-    } else {
-        ev->delay.tv_sec = 0;
-        ev->delay.tv_nsec = 0;
     }
     
     ev->next_event = next;
-    
     return 0;
 }
 
 int event_sequence_init(struct event_sequence *seq) {
-    if(seq == NULL) return -1;
+    if (seq == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
     seq->head = NULL;
     seq->tail = NULL;
     return 0;
 }
 
 int event_sequence_free(struct event_sequence *seq) {
-    
-    if(seq == NULL) {
+    if (seq == NULL) {
         errno = EINVAL;
         return -1;
     }
     
     struct event *current = seq->head;
-
-    while(current != NULL) {
+    while (current != NULL) {
         struct event *next = current->next_event;
         free(current);
         current = next;
     }
     
     seq->head = seq->tail = NULL;
-    
     return 0;
 }
 
 int event_sequence_add_tail(struct event_sequence *seq, const struct event *ev) {
-    if(seq == NULL) return -1;
+    if (seq == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
     
     struct event *temp = malloc(sizeof(struct event));
-    
-    if(temp == NULL) {
+    if (temp == NULL) {
         errno = ENOMEM;
         return -1;
     }
     
-    if(ev == NULL) {
-        event_init(temp, NULL, NULL, NULL);
-    } else {
-        event_init(temp, &ev->event, &ev->delay, NULL);
+    int ret = event_init(temp, (ev != NULL) ? &ev->event : NULL,
+                            (ev != NULL) ? &ev->delay : NULL, NULL);
+    if (ret != 0) {
+        free(temp);
+        return -1;
     }
     
-    if(seq->tail == NULL) {
+    if (seq->tail == NULL) {
         seq->head = seq->tail = temp;
     } else {
         seq->tail->next_event = temp;
@@ -95,8 +98,74 @@ int event_sequence_add_tail(struct event_sequence *seq, const struct event *ev) 
     return 0;
 }
 
-int main(int argc, char *argv[]) {
+int event_print_info(FILE *stream, const struct event *event) {
+    if (event == NULL || stream == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
     
+    fprintf(stream,
+        "Event info:\n\ttype: %u(%s)\n\tcode: %u(%s)\n\tvalue: %d(%s)\n"
+        "\tdelay seconds: %ld\n\tdelay nanoseconds: %ld\n",
+        event->event.type, 
+        libevdev_event_type_get_name(event->event.type),
+        event->event.code,
+        libevdev_event_code_get_name(event->event.type, event->event.code),
+        event->event.value,
+        libevdev_event_value_get_name(event->event.type, event->event.code, event->event.value),
+        event->delay.tv_sec,
+        event->delay.tv_nsec
+    );
+}
+
+int event_sequence_recall_to_uinput(const struct event_sequence *seq, const struct libevdev *source_device) {
+    if (seq == NULL || source_device == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    int uinputfd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
+    if (uinputfd == -1) {
+        perror("Failed to open uinput");
+        return -1;
+    }
+    
+    struct libevdev_uinput *uidev;
+    int ret = libevdev_uinput_create_from_device(source_device, uinputfd, &uidev);
+    if (ret != 0) {
+        close(uinputfd);
+        fprintf(stderr, "Failed to create uinput device: %s\n", strerror(-ret));
+        return -1;
+    }
+    
+    struct event *current = seq->head;
+    while (current != NULL) {
+        if (nanosleep(&current->delay, NULL) == -1) {
+            if (errno != EINTR) {  // Handle signal interruptions
+                close(uinputfd);
+                libevdev_uinput_destroy(uidev);
+                return -1;
+            }
+        }
+        
+        ret = libevdev_uinput_write_event(uidev, current->event.type,
+                                         current->event.code, current->event.value);
+        if (ret != 0) {
+            close(uinputfd);
+            libevdev_uinput_destroy(uidev);
+            fprintf(stderr, "Failed to write event: %s\n", strerror(-ret));
+            return -1;
+        }
+        
+        current = current->next_event;
+    }
+    
+    close(uinputfd);
+    libevdev_uinput_destroy(uidev);
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
     usleep(500 * 1000);
     
     if (argc != 2) {
@@ -110,80 +179,117 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    struct libevdev *inputDevice;
-    int ret = libevdev_new_from_fd(inputfd, &inputDevice);
+    struct libevdev *input_device;
+    int ret = libevdev_new_from_fd(inputfd, &input_device);
     if (ret < 0) {
         fprintf(stderr, "Failed to init libevdev: %s\n", strerror(-ret));
         close(inputfd);
         exit(EXIT_FAILURE);
     }
-     
-     
-    struct event *currentEvent = malloc(sizeof(struct event));
     
-    if(currentEvent == NULL) {
-        errno = ENOMEM;
-        perror("Failed allocating memory for temporal event storage");
+    struct event_sequence events;
+    if (event_sequence_init(&events) != 0) {
+        perror("Failed to initialize event sequence");
+        libevdev_free(input_device);
+        close(inputfd);
         exit(EXIT_FAILURE);
     }
     
-    struct event_sequence events;
-    event_sequence_init(&events);
-    
     struct timespec start, now;
-    
-    for(int i = 0; i < 99; i++) {
-        timespec_get(&start, TIME_UTC);
+    for (int i = 0; i < MAX_EVENTS; i++) {
+        struct event *current_event = malloc(sizeof(struct event));
+        if (current_event == NULL) {
+            perror("Failed to allocate event");
+            event_sequence_free(&events);
+            libevdev_free(input_device);
+            close(inputfd);
+            exit(EXIT_FAILURE);
+        }
         
-        ret = libevdev_next_event(inputDevice, LIBEVDEV_READ_FLAG_BLOCKING, &currentEvent->event);
+        if (timespec_get(&start, TIME_UTC) != TIME_UTC) {
+            perror("Failed to get start time");
+            free(current_event);
+            event_sequence_free(&events);
+            libevdev_free(input_device);
+            close(inputfd);
+            exit(EXIT_FAILURE);
+        }
         
+        ret = libevdev_next_event(input_device, LIBEVDEV_READ_FLAG_BLOCKING, 
+                                 &current_event->event);
         if (ret < 0) {
             fprintf(stderr, "Error reading event: %s\n", strerror(-ret));
-            libevdev_free(inputDevice);
+            free(current_event);
+            event_sequence_free(&events);
+            libevdev_free(input_device);
             close(inputfd);
             exit(EXIT_FAILURE);
         }
         
         if (ret == LIBEVDEV_READ_STATUS_SUCCESS) {
-            timespec_get(&now, TIME_UTC);
-            
-            currentEvent->delay.tv_sec = now.tv_sec - start.tv_sec;
-            currentEvent->delay.tv_nsec = now.tv_nsec - start.tv_nsec;
-            if (currentEvent->delay.tv_nsec < 0) {
-                currentEvent->delay.tv_sec--;
-                currentEvent->delay.tv_nsec += 1000000000;
-            }
-            
-            if(event_sequence_add_tail(&events, currentEvent) == -1) {
-                perror("Error happened while saving the event to linked list");
+            if (timespec_get(&now, TIME_UTC) != TIME_UTC) {
+                perror("Failed to get current time");
+                free(current_event);
+                event_sequence_free(&events);
+                libevdev_free(input_device);
+                close(inputfd);
                 exit(EXIT_FAILURE);
             }
+            
+            current_event->delay.tv_sec = now.tv_sec - start.tv_sec;
+            current_event->delay.tv_nsec = now.tv_nsec - start.tv_nsec;
+            if (current_event->delay.tv_nsec < 0) {
+                current_event->delay.tv_sec--;
+                current_event->delay.tv_nsec += 1000000000;
+            }
+            
+            if (event_sequence_add_tail(&events, current_event) == -1) {
+                perror("Failed to add event to sequence");
+                free(current_event);
+                event_sequence_free(&events);
+                libevdev_free(input_device);
+                close(inputfd);
+                exit(EXIT_FAILURE);
+            }
+            
+            free(current_event);
             printf("Successfully read event %d\n", i+1);
         }
     }
     
-    free(currentEvent);
-    
-    libevdev_free(inputDevice);
-    close(inputfd);
-    
     sleep(1);
     
-    currentEvent = events.head;
-    
-    for(int i = 0; currentEvent != NULL; i++) {
+    struct event *current = events.head;
+    for (int i = 0; current != NULL; i++) {
+        printf("\nWaiting for next event delay\n");
+        struct timespec sleep_time = current->delay;
+        if (nanosleep(&sleep_time, NULL) == -1 && errno != EINTR) {
+            perror("nanosleep failed");
+            event_sequence_free(&events);
+            libevdev_free(input_device);
+            close(inputfd);
+            exit(EXIT_FAILURE);
+        }
         
-        printf("\nWaiting for the next event delay to end so as to recall the next event\n");
-        struct timespec sleep_time = {
-            .tv_sec = currentEvent->delay.tv_sec,
-            .tv_nsec = currentEvent->delay.tv_nsec
-        };
-        nanosleep(&sleep_time, NULL);
-        
-        printf("Recalling the event number %i:\n\ttype: %u(%s)\n\tcode: %u(%s)\n\tvalue: %i(%s)\n\tdelay seconds: %d\n\tdelay nanoseconds: %d\n\n", i+1, currentEvent->event.type, libevdev_event_type_get_name(currentEvent->event.type), currentEvent->event.code, libevdev_event_code_get_name(currentEvent->event.type, currentEvent->event.code), currentEvent->event.value, libevdev_event_value_get_name(currentEvent->event.type, currentEvent->event.code, currentEvent->event.value), currentEvent->delay.tv_sec, currentEvent->delay.tv_nsec);
-        currentEvent = currentEvent->next_event;
+        printf("\nEvent number %d:\n", i+1);
+        event_print_info(stdout, current);
+        current = current->next_event;
     }
-
+    
+    usleep(500 * 1000);
+    printf("\nStarted recalling events\n");
+    if (event_sequence_recall_to_uinput(&events, input_device) != 0) {
+        perror("Failed to recall events to uinput");
+        event_sequence_free(&events);
+        libevdev_free(input_device);
+        close(inputfd);
+        exit(EXIT_FAILURE);
+    }
+    printf("\nFinished recalling events\n");
     
     event_sequence_free(&events);
+    libevdev_free(input_device);
+    close(inputfd);
+    
+    return 0;
 }
