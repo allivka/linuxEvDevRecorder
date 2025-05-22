@@ -24,8 +24,7 @@ struct event_sequence {
   struct event *tail;
 };
 
-int event_init(struct event *ev, const struct input_event *input_ev,
-               const struct timespec *delay_time, struct event *next) {
+int event_init(struct event *ev, const struct input_event *input_ev, const struct timespec *delay_time, struct event *next) {
   if (ev == NULL) {
     errno = EINVAL;
     return -1;
@@ -118,8 +117,15 @@ int event_print_info(FILE *stream, const struct event *event) {
           event->delay.tv_sec, event->delay.tv_nsec);
 }
 
-int event_sequence_recall_to_uinput(const struct event_sequence *seq,
-                                    const struct libevdev *source_device) {
+int event_recall_to_uinput_no_delay(const struct event *event, const struct libevdev_uinput *uidev) {
+  int ret = libevdev_uinput_write_event(uidev, event->event.type, event->event.code, event->event.value);
+  if (ret != 0) {
+    fprintf(stderr, "Failed to write event: %s\n", strerror(-ret));
+    return -1;
+  }
+}
+
+int event_sequence_recall_to_uinput(const struct event_sequence *seq, const struct libevdev *source_device) {
   if (seq == NULL || source_device == NULL) {
     errno = EINVAL;
     return -1;
@@ -149,8 +155,7 @@ int event_sequence_recall_to_uinput(const struct event_sequence *seq,
       }
     }
 
-    ret = libevdev_uinput_write_event(
-        uidev, current->event.type, current->event.code, current->event.value);
+    ret = libevdev_uinput_write_event(uidev, current->event.type, current->event.code, current->event.value);
     if (ret != 0) {
       close(uinputfd);
       libevdev_uinput_destroy(uidev);
