@@ -23,6 +23,8 @@
             <property name="valign">center</property>
             <child>
               <object class="GtkBox" id="record_button_box">
+                <property name="hexpand">True</property>
+                <property name="tooltip-text">Continue/Pause recording events from event device</property>
                 <child>
                   <object class="GtkImage" id="record_button_icon">
                     <property name="icon-name">media-record</property>
@@ -32,7 +34,6 @@
                   <object class="GtkToggleButton" id="record_toggle_button">
                     <property name="label">Record events</property>
                     <property name="margin-bottom">5</property>
-                    <property name="tooltip-text">Continue/Pause recording events from event device</property>
                   </object>
                 </child>
                 <layout>
@@ -43,6 +44,9 @@
             </child>
             <child>
               <object class="GtkBox" id="play_button_box">
+                <property name="has-tooltip">True</property>
+                <property name="hexpand">True</property>
+                <property name="tooltip-text">Continue/Pause playing recorded events</property>
                 <child>
                   <object class="GtkImage" id="play_button_icon">
                     <property name="icon-name">media-playback-start</property>
@@ -50,10 +54,8 @@
                 </child>
                 <child>
                   <object class="GtkToggleButton" id="play_toggle_button">
-                    <property name="halign">baseline</property>
                     <property name="label">Play events</property>
                     <property name="margin-top">5</property>
-                    <property name="tooltip-text">Continue/Pause playin recordedevents</property>
                     <accessibility>
                       <property name="autocomplete">list</property>
                     </accessibility>
@@ -69,9 +71,10 @@
             </child>
             <child>
               <object class="GtkButton" id="clear_button">
-                <property name="icon-name">list-remove</property>
+                <property name="icon-name">process-stop</property>
                 <property name="margin-bottom">5</property>
                 <property name="margin-end">10</property>
+                <property name="tooltip-text">Clear the sequence of recorded events</property>
                 <layout>
                   <property name="column">0</property>
                   <property name="row">1</property>
@@ -79,10 +82,11 @@
               </object>
             </child>
             <child>
-              <object class="GtkButton" id="replay_button">
+              <object class="GtkButton" id="reset_button">
                 <property name="icon-name">media-playlist-repeat</property>
                 <property name="margin-end">10</property>
                 <property name="margin-top">5</property>
+                <property name="tooltip-text">Reset playing recorded events. After reset next playing  will start from the  beginning of sequence</property>
                 <layout>
                   <property name="column">0</property>
                   <property name="row">2</property>
@@ -90,12 +94,23 @@
               </object>
             </child>
             <child>
-              <object class="GtkEntry" id="evdev_path_entry">
-                <property name="margin-bottom">20</property>
-                <property name="placeholder-text">Event device file path</property>
-                <property name="primary-icon-name">document-new</property>
-                <property name="primary-icon-tooltip-text">Enter the path of event device to read events from</property>
-                <property name="text">/dev/input/</property>
+              <object class="GtkBox" id="evdev_box">
+                <child>
+                  <object class="GtkEntry" id="evdev_path_entry">
+                    <property name="margin-bottom">20</property>
+                    <property name="placeholder-text">Event device file path</property>
+                    <property name="primary-icon-name">document-new</property>
+                    <property name="primary-icon-tooltip-text">Enter the path of event device to read events from</property>
+                    <property name="text">/dev/input/</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="evdev_load_button">
+                    <property name="icon-name">media-eject</property>
+                    <property name="margin-bottom">20</property>
+                    <property name="tooltip-text">Load event device as input device for events recording</property>
+                  </object>
+                </child>
                 <layout>
                   <property name="column">0</property>
                   <property name="column-span">2</property>

@@ -4,6 +4,12 @@
 enum state {STATE_RECORDING, STATE_PLAYING, STATE_IDLE};
 
 struct {
+    
+    struct libevdev *inputdevice;
+    struct libevdev_uinput *uinputDevice;
+    
+    GtkWidget *window;
+    
     enum state state;
     GtkWidget *stateLabel;
     
@@ -11,7 +17,7 @@ struct {
     GtkWidget *playButton;
     
     GtkWidget *clearButton;
-    GtkWidget *replayButton;
+    GtkWidget *resetButton;
     
     GtkWidget *recordIcon;
     GtkWidget *playIcon;
@@ -44,7 +50,7 @@ static void on_record_button_toggle(GtkWidget *button, gpointer user_data) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
         appState.state = STATE_RECORDING;
         
-        gtk_image_set_from_icon_name(GTK_IMAGE(appState.recordIcon), "process-stop");
+        gtk_image_set_from_icon_name(GTK_IMAGE(appState.recordIcon), "media-playback-stop");
         gtk_image_set_from_icon_name(GTK_IMAGE(appState.playIcon), "media-playback-start");
     } else {
         appState.state = STATE_IDLE;
@@ -69,6 +75,23 @@ static void on_play_button_toggle(GtkWidget *button, gpointer user_data) {
     
 }
 
+static void on_evdev_load_button(GtkWidget *button, gpointer user_data) {
+    
+}
+
+static void on_clear_button(GtkWidget *button, gpointer user_data) {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.recordButton), FALSE);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
+    
+    
+}
+
+static void on_reset_button(GtkWidget *button, gpointer user_data) {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
+    
+    
+}
+
 static gboolean on_window_close(GtkWidget *window, gpointer user_data) {
     if(appState.main_app_idle_id != 0) g_source_remove(appState.main_app_idle_id);
     
@@ -78,12 +101,15 @@ static gboolean on_window_close(GtkWidget *window, gpointer user_data) {
 static void on_activate(GtkApplication *app, gpointer user_data) {
     GtkBuilder *builder = gtk_builder_new_from_file("ui/linuxmacro.ui");
     
-    GtkWidget *window = GTK_WIDGET(gtk_builder_get_object(builder, "app_window"));
-    g_signal_connect_swapped(window, "close-request", G_CALLBACK(on_window_close), NULL);
-    gtk_window_set_application(GTK_WINDOW(window), app);
+    appState.window = GTK_WIDGET(gtk_builder_get_object(builder, "app_window"));
+    g_signal_connect_swapped(appState.window, "close-request", G_CALLBACK(on_window_close), NULL);
+    gtk_window_set_application(GTK_WINDOW(appState.window), app);
     
     appState.recordButton = GTK_WIDGET(gtk_builder_get_object(builder, "record_toggle_button"));
     appState.playButton = GTK_WIDGET(gtk_builder_get_object(builder, "play_toggle_button"));
+    
+    appState.clearButton = GTK_WIDGET(gtk_builder_get_object(builder, "clear_button"));
+    appState.resetButton = GTK_WIDGET(gtk_builder_get_object(builder, "reset_button"));
     
     appState.recordIcon = GTK_WIDGET(gtk_builder_get_object(builder, "record_button_icon"));
     appState.playIcon = GTK_WIDGET(gtk_builder_get_object(builder, "play_button_icon"));
@@ -93,11 +119,12 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     
     g_signal_connect(appState.recordButton, "toggled", G_CALLBACK(on_record_button_toggle), NULL);
     g_signal_connect(appState.playButton, "toggled", G_CALLBACK(on_play_button_toggle), NULL);
+    g_signal_connect(appState.clearButton, "clicked", G_CALLBACK(on_clear_button), NULL);
+    g_signal_connect(appState.resetButton, "clicked", G_CALLBACK(on_reset_button), NULL);
     
     appState.main_app_idle_id =  g_idle_add(main_app_tick, NULL);
     
-    
-    gtk_window_present(GTK_WINDOW(window));
+    gtk_window_present(GTK_WINDOW(appState.window));
 }
 
 int main(int argc, char *argv[]) {
