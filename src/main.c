@@ -1,11 +1,13 @@
 #include "macro.h"
 #include <gtk/gtk.h>
 
-enum state {STATE_RECORDING, STATE_PLAYING, STATE_IDLE};
+enum state {STATE_IDLE, STATE_RECORDING, STATE_PLAYING};
+
+struct event_sequence eventSequence;
 
 struct {
     
-    struct libevdev *inputdevice;
+    struct libevdev *inputDevice;
     struct libevdev_uinput *uinputDevice;
     
     GtkWidget *window;
@@ -16,15 +18,36 @@ struct {
     GtkWidget *recordButton;
     GtkWidget *playButton;
     
-    GtkWidget *clearButton;
-    GtkWidget *resetButton;
+    // GtkWidget *clearButton;
+    // GtkWidget *resetButton;
     
     GtkWidget *recordIcon;
     GtkWidget *playIcon;
     
     guint main_app_idle_id;
     
-} appState;
+} appState = {
+    .inputDevice = NULL,
+    .uinputDevice = NULL,
+    .window = NULL,
+    .state = STATE_IDLE,
+    .stateLabel = NULL,
+    .recordButton = NULL,
+    .playButton = NULL,
+    // .clearButton = NULL,
+    // .resetButton = NULL,
+    .recordIcon = NULL,
+    .playIcon = NULL,
+    .main_app_idle_id = 0
+};
+
+void show_error_dialog(const char* title, const char* details) {
+    GtkAlertDialog *dialog = gtk_alert_dialog_new(title);
+    
+    gtk_alert_dialog_set_detail(dialog, details);
+    gtk_alert_dialog_set_modal(dialog, TRUE);
+    gtk_alert_dialog_show(dialog, GTK_WINDOW(appState.window));
+}
 
 static gboolean main_app_tick(gpointer user_data) {
     switch(appState.state) {
@@ -38,7 +61,7 @@ static gboolean main_app_tick(gpointer user_data) {
             gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: RECORDING");
             break;
         default:
-            gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: UNKNOW STATE");
+            gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: UNKNOWN STATE");
             break;
     }
     
@@ -46,6 +69,14 @@ static gboolean main_app_tick(gpointer user_data) {
 }
 
 static void on_record_button_toggle(GtkWidget *button, gpointer user_data) {
+    
+    if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button)) == TRUE && (appState.inputDevice == NULL || libevdev_get_fd(appState.inputDevice) == -1)) {
+        show_error_dialog("Failed recording events", "Event input device wasn't initialized or unknown error occurred");
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.recordButton), FALSE);
+        gtk_image_set_from_icon_name(GTK_IMAGE(appState.recordIcon), "media-record");
+        return;
+    }
+    
     if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button)) == TRUE) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
         appState.state = STATE_RECORDING;
@@ -108,8 +139,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     appState.recordButton = GTK_WIDGET(gtk_builder_get_object(builder, "record_toggle_button"));
     appState.playButton = GTK_WIDGET(gtk_builder_get_object(builder, "play_toggle_button"));
     
-    appState.clearButton = GTK_WIDGET(gtk_builder_get_object(builder, "clear_button"));
-    appState.resetButton = GTK_WIDGET(gtk_builder_get_object(builder, "reset_button"));
+    // appState.clearButton = GTK_WIDGET(gtk_builder_get_object(builder, "clear_button"));
+    // appState.resetButton = GTK_WIDGET(gtk_builder_get_object(builder, "reset_button"));
     
     appState.recordIcon = GTK_WIDGET(gtk_builder_get_object(builder, "record_button_icon"));
     appState.playIcon = GTK_WIDGET(gtk_builder_get_object(builder, "play_button_icon"));
@@ -119,23 +150,85 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     
     g_signal_connect(appState.recordButton, "toggled", G_CALLBACK(on_record_button_toggle), NULL);
     g_signal_connect(appState.playButton, "toggled", G_CALLBACK(on_play_button_toggle), NULL);
-    g_signal_connect(appState.clearButton, "clicked", G_CALLBACK(on_clear_button), NULL);
-    g_signal_connect(appState.resetButton, "clicked", G_CALLBACK(on_reset_button), NULL);
+    g_signal_connect(GTK_WIDGET(gtk_builder_get_object(builder, "clear_button")), "clicked", G_CALLBACK(on_clear_button), NULL);
+    g_signal_connect(GTK_WIDGET(gtk_builder_get_object(builder, "reset_button")), "clicked", G_CALLBACK(on_reset_button), NULL);
     
     appState.main_app_idle_id =  g_idle_add(main_app_tick, NULL);
     
     gtk_window_present(GTK_WINDOW(appState.window));
+    
+    g_object_unref(builder);
+}
+
+void cleanup() {
+    event_sequence_destroy(&eventSequence);
+    
+    int fd;
+    
+    if(appState.inputDevice != NULL) {
+    
+        fd = libevdev_get_fd(appState.inputDevice);
+        libevdev_free(appState.inputDevice);
+        if(fd != -1) {
+            close(fd);
+        }
+    }
+    
+    if(appState.uinputDevice != NULL) {
+    
+        fd = libevdev_uinput_get_fd(appState.uinputDevice);
+        libevdev_uinput_destroy(appState.uinputDevice);
+        if(fd != -1) {
+            close(fd);
+        }
+    }
+}
+
+void signal_handler(int sig) {
+    printf("Caught signal %d\n", sig);
+    cleanup();
+    _exit(1);
 }
 
 int main(int argc, char *argv[]) {
     
-    GtkApplication *app = gtk_application_new("com.linuxMacro.allivka.github", G_APPLICATION_DEFAULT_FLAGS);
+    event_sequence_init(&eventSequence);
+    
+    atexit(cleanup);
+    signal(SIGINT, signal_handler);
+    signal(SIGSEGV, signal_handler);
+    signal(SIGTERM, signal_handler);
+    
+    appState.inputDevice = libevdev_new();
+    
+    int uidevfd = open("/dev/uinput", O_WRONLY);
+    
+    if(uidevfd == -1) {
+        perror("Failed opening uinput device");
+        close(uidevfd);
+        cleanup();
+        return -1;
+    }
+    
+    int ret = libevdev_uinput_create_from_device(appState.inputDevice, uidevfd, &appState.uinputDevice);
+    
+    if(ret < 0) {
+        errno = -ret;
+        perror("Failed initializing uinput device");
+        close(uidevfd);
+        cleanup();
+        return -1;
+    }
+    
+    GtkApplication *app = gtk_application_new("dev.allivka.linuxmacro", G_APPLICATION_DEFAULT_FLAGS);
     
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
     
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     
     g_object_unref(app);
+    
+    cleanup();
     
     return status;
 }

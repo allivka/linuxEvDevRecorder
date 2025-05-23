@@ -12,7 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <string.h>
-
+ 
 struct event {
   struct input_event event;
   struct timespec delay;
@@ -54,7 +54,7 @@ int event_sequence_init(struct event_sequence *seq) {
   return 0;
 }
 
-int event_sequence_free(struct event_sequence *seq) {
+int event_sequence_destroy(struct event_sequence *seq) {
   if (seq == NULL) {
     errno = EINVAL;
     return -1;
