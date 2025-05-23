@@ -201,12 +201,15 @@ int main(int argc, char *argv[]) {
     
     appState.inputDevice = libevdev_new();
     
+    libevdev_set_name(appState.inputDevice, "Custom Device");
+    libevdev_enable_event_type(appState.inputDevice, EV_KEY);
+    libevdev_enable_event_code(appState.inputDevice, EV_KEY, BTN_LEFT, NULL);
+    
     int uidevfd = open("/dev/uinput", O_WRONLY);
     
     if(uidevfd == -1) {
         perror("Failed opening uinput device");
         close(uidevfd);
-        cleanup();
         return -1;
     }
     
@@ -216,7 +219,6 @@ int main(int argc, char *argv[]) {
         errno = -ret;
         perror("Failed initializing uinput device");
         close(uidevfd);
-        cleanup();
         return -1;
     }
     
