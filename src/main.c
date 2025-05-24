@@ -15,6 +15,8 @@ struct {
     enum state state;
     GtkWidget *stateLabel;
     
+    GtkWidget *evdevPathEntry;
+    
     GtkWidget *recordButton;
     GtkWidget *playButton;
     
@@ -32,6 +34,7 @@ struct {
     .window = NULL,
     .state = STATE_IDLE,
     .stateLabel = NULL,
+    .evdevPathEntry = NULL,
     .recordButton = NULL,
     .playButton = NULL,
     // .clearButton = NULL,
@@ -40,6 +43,71 @@ struct {
     .playIcon = NULL,
     .main_app_idle_id = 0
 };
+
+void cleanup() {
+    event_sequence_destroy(&eventSequence);
+    
+    int fd;
+    
+    if(appState.inputDevice != NULL) {
+    
+        fd = libevdev_get_fd(appState.inputDevice);
+        libevdev_free(appState.inputDevice);
+        appState.inputDevice = NULL;
+        if(fd != -1) {
+            close(fd);
+        }
+    }
+    
+    if(appState.uinputDevice != NULL) {
+    
+        fd = libevdev_uinput_get_fd(appState.uinputDevice);
+        libevdev_uinput_destroy(appState.uinputDevice);
+        appState.uinputDevice = NULL;
+        if(fd != -1) {
+            close(fd);
+        }
+    }
+}
+
+int init_dev(int fd) {
+    
+    int ret;
+    
+    if(fd != -1) {
+    
+        ret = libevdev_new_from_fd(fd, &appState.inputDevice);
+        
+        if(ret < 0) {
+            errno = -ret;
+            perror("Failed opening input device");
+            return -1;
+        }
+    } else {
+        appState.inputDevice = libevdev_new();
+    
+        libevdev_set_name(appState.inputDevice, "Custom Device");
+    }
+    
+    int uidevfd = open("/dev/uinput", O_WRONLY);
+    
+    if(uidevfd == -1) {
+        perror("Failed opening uinput device");
+        close(uidevfd);
+        return -1;
+    }
+    
+    ret = libevdev_uinput_create_from_device(appState.inputDevice, uidevfd, &appState.uinputDevice);
+    
+    if(ret < 0) {
+        errno = -ret;
+        perror("Failed initializing uinput device");
+        close(uidevfd);
+        return -1;
+    }
+    
+    return 0;
+}
 
 void show_error_dialog(const char* title, const char* details) {
     GtkAlertDialog *dialog = gtk_alert_dialog_new(title);
@@ -107,19 +175,26 @@ static void on_play_button_toggle(GtkWidget *button, gpointer user_data) {
 }
 
 static void on_evdev_load_button(GtkWidget *button, gpointer user_data) {
-    
+    int fd = open(gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(appState.evdevPathEntry))), O_RDONLY);
+    if(fd == -1) {
+        show_error_dialog("Failed loading the event input device. Didn't manage to open evdev file", strerror(errno));
+        return;
+    }
+    cleanup();
+    if(init_dev(fd) == -1) {
+        show_error_dialog("Failed loading the event input device. Didn't manage to initialize input and uinput devices", strerror(errno));
+        return;
+    }
 }
 
 static void on_clear_button(GtkWidget *button, gpointer user_data) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.recordButton), FALSE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
     
-    
 }
 
 static void on_reset_button(GtkWidget *button, gpointer user_data) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
-    
     
 }
 
@@ -150,8 +225,13 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     
     g_signal_connect(appState.recordButton, "toggled", G_CALLBACK(on_record_button_toggle), NULL);
     g_signal_connect(appState.playButton, "toggled", G_CALLBACK(on_play_button_toggle), NULL);
+    
     g_signal_connect(GTK_WIDGET(gtk_builder_get_object(builder, "clear_button")), "clicked", G_CALLBACK(on_clear_button), NULL);
     g_signal_connect(GTK_WIDGET(gtk_builder_get_object(builder, "reset_button")), "clicked", G_CALLBACK(on_reset_button), NULL);
+    
+    appState.evdevPathEntry = GTK_WIDGET(gtk_builder_get_object(builder, "evdev_path_entry"));
+    
+    g_signal_connect(GTK_WIDGET(gtk_builder_get_object(builder, "evdev_load_button")), "clicked", G_CALLBACK(on_evdev_load_button), NULL);
     
     appState.main_app_idle_id =  g_idle_add(main_app_tick, NULL);
     
@@ -160,29 +240,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_object_unref(builder);
 }
 
-void cleanup() {
-    event_sequence_destroy(&eventSequence);
-    
-    int fd;
-    
-    if(appState.inputDevice != NULL) {
-    
-        fd = libevdev_get_fd(appState.inputDevice);
-        libevdev_free(appState.inputDevice);
-        if(fd != -1) {
-            close(fd);
-        }
-    }
-    
-    if(appState.uinputDevice != NULL) {
-    
-        fd = libevdev_uinput_get_fd(appState.uinputDevice);
-        libevdev_uinput_destroy(appState.uinputDevice);
-        if(fd != -1) {
-            close(fd);
-        }
-    }
-}
+
 
 void signal_handler(int sig) {
     printf("Caught signal %d\n", sig);
@@ -199,28 +257,7 @@ int main(int argc, char *argv[]) {
     signal(SIGSEGV, signal_handler);
     signal(SIGTERM, signal_handler);
     
-    appState.inputDevice = libevdev_new();
-    
-    libevdev_set_name(appState.inputDevice, "Custom Device");
-    libevdev_enable_event_type(appState.inputDevice, EV_KEY);
-    libevdev_enable_event_code(appState.inputDevice, EV_KEY, BTN_LEFT, NULL);
-    
-    int uidevfd = open("/dev/uinput", O_WRONLY);
-    
-    if(uidevfd == -1) {
-        perror("Failed opening uinput device");
-        close(uidevfd);
-        return -1;
-    }
-    
-    int ret = libevdev_uinput_create_from_device(appState.inputDevice, uidevfd, &appState.uinputDevice);
-    
-    if(ret < 0) {
-        errno = -ret;
-        perror("Failed initializing uinput device");
-        close(uidevfd);
-        return -1;
-    }
+    init_dev(-1);
     
     GtkApplication *app = gtk_application_new("dev.allivka.linuxmacro", G_APPLICATION_DEFAULT_FLAGS);
     
