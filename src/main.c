@@ -140,7 +140,7 @@ static void record_tick() {
         int32_t temp = (currentTS.tv_nsec - lastEventTS.tv_nsec);
         if(temp < 0 && event.delay.tv_sec > 0) {
             event.delay.tv_sec--;
-            temp += 999999999;
+            temp += 1000000000;
         }
         event.delay.tv_nsec = temp;
     }
@@ -224,6 +224,7 @@ static void on_evdev_load_button(GtkWidget *button, gpointer user_data) {
     }
     cleanup();
     if(init_dev(fd) == -1) {
+        close(fd);
         show_error_dialog("Failed loading the event input device. Didn't manage to initialize input and uinput devices", strerror(errno));
         return;
     }
@@ -232,6 +233,8 @@ static void on_evdev_load_button(GtkWidget *button, gpointer user_data) {
 static void on_clear_button(GtkWidget *button, gpointer user_data) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.recordButton), FALSE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
+    event_sequence_destroy(&eventSequence);
+    event_sequence_init(&eventSequence);
     
 }
 
@@ -248,6 +251,11 @@ static gboolean on_window_close(GtkWidget *window, gpointer user_data) {
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
     GtkBuilder *builder = gtk_builder_new_from_file("ui/linuxmacro.ui");
+    
+    if (!builder) {
+        g_error("Failed to load UI file.");
+        return;
+    }
     
     appState.window = GTK_WIDGET(gtk_builder_get_object(builder, "app_window"));
     g_signal_connect_swapped(appState.window, "close-request", G_CALLBACK(on_window_close), NULL);
@@ -278,8 +286,6 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     
     g_object_unref(builder);
 }
-
-
 
 void signal_handler(int sig) {
     printf("Caught signal %d\n", sig);

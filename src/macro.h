@@ -1,6 +1,6 @@
 
-#ifndef MACRO_HPP
-#define MACRO_HPP
+#ifndef MACRO_H
+#define MACRO_H
 
 #include <errno.h>
 #include <fcntl.h>
@@ -115,6 +115,8 @@ int event_print_info(FILE *stream, const struct event *event) {
           libevdev_event_value_get_name(event->event.type, event->event.code,
                                         event->event.value),
           event->delay.tv_sec, event->delay.tv_nsec);
+  
+  return 0;
 }
 
 int event_recall_to_uinput_no_delay(const struct event *event, const struct libevdev_uinput *uidev) {
@@ -123,6 +125,7 @@ int event_recall_to_uinput_no_delay(const struct event *event, const struct libe
     fprintf(stderr, "Failed to write event: %s\n", strerror(-ret));
     return -1;
   }
+  return 0;
 }
 
 int event_sequence_recall_to_uinput(const struct event_sequence *seq, const struct libevdev *source_device) {
