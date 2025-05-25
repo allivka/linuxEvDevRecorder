@@ -158,17 +158,40 @@ static void record_tick() {
     
 }
 
+static void play_tick() {
+    if(appState.playCurrentEvent == NULL) {
+        appState.playCurrentEvent == eventSequence.head;
+    }
+    if(appState.playCurrentEvent == NULL) {
+        appState.state = STATE_IDLE;
+        return;
+    }
+    
+    int ret = libevdev_uinput_write_event(appState.uinputDevice, appState.playCurrentEvent->event.type, appState.playCurrentEvent->event.code, appState.playCurrentEvent->event.value);
+    
+    if(ret < 0) {
+        errno = -ret;
+        perror("Failed writing event to uinput device");
+        return;
+    }
+    
+    nanosleep(&appState.playCurrentEvent->delay, NULL);
+    
+    appState.playCurrentEvent = appState.playCurrentEvent->next_event;
+}
+
 static gboolean main_app_tick(gpointer user_data) {
     switch(appState.state) {
         case STATE_IDLE:
             gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: IDLE");
             break;
-        case STATE_PLAYING:
-            gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: PLAYING");
-            break;
         case STATE_RECORDING:
             gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: RECORDING");
             record_tick();
+            break;
+        case STATE_PLAYING:
+            gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: PLAYING");
+            play_tick();
             break;
         default:
             gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: UNKNOWN STATE");
