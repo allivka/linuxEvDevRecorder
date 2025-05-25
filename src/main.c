@@ -3,9 +3,11 @@
 
 enum state {STATE_IDLE, STATE_RECORDING, STATE_PLAYING};
 
-struct event_sequence eventSequence;
+static struct event_sequence eventSequence;
 
-struct {
+static struct {
+    
+    struct event *playCurrentEvent;
     
     struct libevdev *inputDevice;
     struct libevdev_uinput *uinputDevice;
@@ -20,15 +22,13 @@ struct {
     GtkWidget *recordButton;
     GtkWidget *playButton;
     
-    // GtkWidget *clearButton;
-    // GtkWidget *resetButton;
-    
     GtkWidget *recordIcon;
     GtkWidget *playIcon;
     
     guint main_app_idle_id;
     
 } appState = {
+    .playCurrentEvent = NULL,
     .inputDevice = NULL,
     .uinputDevice = NULL,
     .window = NULL,
@@ -37,14 +37,13 @@ struct {
     .evdevPathEntry = NULL,
     .recordButton = NULL,
     .playButton = NULL,
-    // .clearButton = NULL,
-    // .resetButton = NULL,
     .recordIcon = NULL,
     .playIcon = NULL,
     .main_app_idle_id = 0
 };
 
-void cleanup() {
+
+static void cleanup() {
     event_sequence_destroy(&eventSequence);
     
     int fd;
@@ -70,7 +69,7 @@ void cleanup() {
     }
 }
 
-int init_dev(int fd) {
+static int init_dev(int fd) {
     
     int ret;
     
@@ -117,6 +116,48 @@ void show_error_dialog(const char* title, const char* details) {
     gtk_alert_dialog_show(dialog, GTK_WINDOW(appState.window));
 }
 
+static void record_tick() {
+    static struct timespec lastEventTS = {.tv_sec = 0, .tv_nsec = 0};
+    
+    struct event event;
+    
+    if(!libevdev_has_event_pending(appState.inputDevice)) return;
+    
+    int ret = libevdev_next_event(appState.inputDevice, LIBEVDEV_READ_FLAG_NORMAL, &event.event);
+    if(ret != LIBEVDEV_READ_STATUS_SUCCESS) {
+        errno = EAGAIN;
+        perror("Failed reading the event input device");
+        return;
+    }
+    
+    struct timespec currentTS;
+    if(timespec_get(&currentTS, TIME_UTC) == 0) {
+        perror("Failed getting current time");
+    }
+    
+    if(eventSequence.tail != NULL) {
+        event.delay.tv_sec = currentTS.tv_sec - lastEventTS.tv_sec;
+        int32_t temp = (currentTS.tv_nsec - lastEventTS.tv_nsec);
+        if(temp < 0 && event.delay.tv_sec > 0) {
+            event.delay.tv_sec--;
+            temp += 999999999;
+        }
+        event.delay.tv_nsec = temp;
+    }
+    
+    lastEventTS = currentTS;
+    
+    ret = event_sequence_add_tail(&eventSequence, &event);
+    
+    if(ret == -1) {
+        perror("Failed saving the input event");
+        return;
+    }
+    
+    event_print_info(stderr, &event);
+    
+}
+
 static gboolean main_app_tick(gpointer user_data) {
     switch(appState.state) {
         case STATE_IDLE:
@@ -127,6 +168,7 @@ static gboolean main_app_tick(gpointer user_data) {
             break;
         case STATE_RECORDING:
             gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: RECORDING");
+            record_tick();
             break;
         default:
             gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: UNKNOWN STATE");
@@ -213,9 +255,6 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     
     appState.recordButton = GTK_WIDGET(gtk_builder_get_object(builder, "record_toggle_button"));
     appState.playButton = GTK_WIDGET(gtk_builder_get_object(builder, "play_toggle_button"));
-    
-    // appState.clearButton = GTK_WIDGET(gtk_builder_get_object(builder, "clear_button"));
-    // appState.resetButton = GTK_WIDGET(gtk_builder_get_object(builder, "reset_button"));
     
     appState.recordIcon = GTK_WIDGET(gtk_builder_get_object(builder, "record_button_icon"));
     appState.playIcon = GTK_WIDGET(gtk_builder_get_object(builder, "play_button_icon"));
