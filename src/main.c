@@ -86,13 +86,24 @@ static int init_dev(int fd) {
         appState.inputDevice = libevdev_new();
     
         libevdev_set_name(appState.inputDevice, "Custom Device");
+        
+        ret = libevdev_enable_event_type(appState.inputDevice, EV_SYN);
+        if (ret < 0) {
+            perror("Failed to enable EV_SYN");
+            return -1;
+        }
+        
+        ret = libevdev_enable_event_code(appState.inputDevice, EV_SYN, SYN_REPORT, NULL);
+        if (ret < 0) {
+            perror("Failed to enable EV_SYN");
+            return -1;
+        }
     }
     
     int uidevfd = open("/dev/uinput", O_WRONLY);
     
     if(uidevfd == -1) {
         perror("Failed opening uinput device");
-        close(uidevfd);
         return -1;
     }
     
@@ -119,7 +130,14 @@ void show_error_dialog(const char* title, const char* details) {
 static void record_tick() {
     static struct timespec lastEventTS = {.tv_sec = 0, .tv_nsec = 0};
     
+    if(libevdev_get_fd(appState.inputDevice) == -1) {
+        appState.state = STATE_IDLE;
+        return;
+    }
+    
     struct event event;
+    event.delay.tv_sec = 0;
+    event.delay.tv_nsec = 0;
     
     if(!libevdev_has_event_pending(appState.inputDevice)) return;
     
@@ -137,7 +155,7 @@ static void record_tick() {
     
     if(eventSequence.tail != NULL) {
         event.delay.tv_sec = currentTS.tv_sec - lastEventTS.tv_sec;
-        int32_t temp = (currentTS.tv_nsec - lastEventTS.tv_nsec);
+        long temp = (currentTS.tv_nsec - lastEventTS.tv_nsec);
         if(temp < 0 && event.delay.tv_sec > 0) {
             event.delay.tv_sec--;
             temp += 1000000000;
@@ -159,12 +177,44 @@ static void record_tick() {
 }
 
 static void play_tick() {
+    
+    static struct timespec lastEventTS = {0, 0};
+    
+    if(libevdev_uinput_get_fd(appState.uinputDevice) == -1 || appState.playCurrentEvent == eventSequence.tail) {
+        appState.state = STATE_IDLE;
+        return;
+    }
+    
     if(appState.playCurrentEvent == NULL) {
-        appState.playCurrentEvent == eventSequence.head;
+        appState.playCurrentEvent = eventSequence.head;
     }
     if(appState.playCurrentEvent == NULL) {
         appState.state = STATE_IDLE;
         return;
+    }
+    
+    struct timespec currentTS;
+    if(timespec_get(&currentTS, TIME_UTC) == 0) {
+        perror("Failed getting current time");
+        return;
+    }
+    
+    if(appState.playCurrentEvent != eventSequence.head) {
+        
+        struct timespec timePast = {0, 0};
+        
+        timePast.tv_sec = currentTS.tv_sec - lastEventTS.tv_sec;
+        long temp = (currentTS.tv_nsec - lastEventTS.tv_nsec);
+        if(temp < 0 && timePast.tv_sec > 0) {
+            timePast.tv_sec--;
+            temp += 1000000000;
+        }
+        timePast.tv_nsec = temp;
+        
+        if(timePast.tv_sec < appState.playCurrentEvent->delay.tv_sec || 
+            (timePast.tv_sec == appState.playCurrentEvent->delay.tv_sec && timePast.tv_nsec < appState.playCurrentEvent->delay.tv_nsec)) {
+            return;
+        }
     }
     
     int ret = libevdev_uinput_write_event(appState.uinputDevice, appState.playCurrentEvent->event.type, appState.playCurrentEvent->event.code, appState.playCurrentEvent->event.value);
@@ -175,8 +225,8 @@ static void play_tick() {
         return;
     }
     
-    nanosleep(&appState.playCurrentEvent->delay, NULL);
     
+        
     appState.playCurrentEvent = appState.playCurrentEvent->next_event;
 }
 
@@ -325,7 +375,10 @@ int main(int argc, char *argv[]) {
     signal(SIGSEGV, signal_handler);
     signal(SIGTERM, signal_handler);
     
-    init_dev(-1);
+    if(init_dev(-1) == -1) {
+        perror("Failed initializing default input and uinput devices");
+        exit(EXIT_FAILURE);
+    }
     
     GtkApplication *app = gtk_application_new("dev.allivka.linuxmacro", G_APPLICATION_DEFAULT_FLAGS);
     
