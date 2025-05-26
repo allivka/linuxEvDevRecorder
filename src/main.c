@@ -180,17 +180,14 @@ static void play_tick() {
     
     static struct timespec lastEventTS = {0, 0};
     
-    if(libevdev_uinput_get_fd(appState.uinputDevice) == -1 || appState.playCurrentEvent == eventSequence.tail) {
+    if(libevdev_uinput_get_fd(appState.uinputDevice) == -1 || appState.playCurrentEvent == eventSequence.tail || eventSequence.head == NULL) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
         appState.state = STATE_IDLE;
         return;
     }
     
     if(appState.playCurrentEvent == NULL) {
         appState.playCurrentEvent = eventSequence.head;
-    }
-    if(appState.playCurrentEvent == NULL) {
-        appState.state = STATE_IDLE;
-        return;
     }
     
     struct timespec currentTS;
@@ -219,13 +216,19 @@ static void play_tick() {
     
     int ret = libevdev_uinput_write_event(appState.uinputDevice, appState.playCurrentEvent->event.type, appState.playCurrentEvent->event.code, appState.playCurrentEvent->event.value);
     
+    if(timespec_get(&currentTS, TIME_UTC) == 0) {
+        perror("Failed getting current time");
+    }
+    
+    lastEventTS = currentTS;
+    
+    event_print_info(stderr, appState.playCurrentEvent);
+    
     if(ret < 0) {
         errno = -ret;
         perror("Failed writing event to uinput device");
         return;
     }
-    
-    
         
     appState.playCurrentEvent = appState.playCurrentEvent->next_event;
 }
@@ -281,6 +284,7 @@ static void on_play_button_toggle(GtkWidget *button, gpointer user_data) {
         
         gtk_image_set_from_icon_name(GTK_IMAGE(appState.playIcon), "media-playback-pause");
         gtk_image_set_from_icon_name(GTK_IMAGE(appState.recordIcon), "media-record");
+        fprintf(stderr, "\nStarted recalling the events\n");
     } else {
         appState.state = STATE_IDLE;
         
@@ -313,7 +317,10 @@ static void on_clear_button(GtkWidget *button, gpointer user_data) {
 
 static void on_reset_button(GtkWidget *button, gpointer user_data) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
-    
+    appState.playCurrentEvent = eventSequence.head;
+    if(appState.state == STATE_PLAYING) {
+        
+    }
 }
 
 static gboolean on_window_close(GtkWidget *window, gpointer user_data) {
