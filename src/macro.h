@@ -72,7 +72,7 @@ int event_sequence_destroy(struct event_sequence *seq) {
 }
 
 int event_sequence_add_tail(struct event_sequence *seq, const struct event *ev) {
-  if (seq == NULL) {
+  if (seq == NULL || ev == NULL) {
     errno = EINVAL;
     return -1;
   }

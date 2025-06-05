@@ -42,30 +42,17 @@ static struct {
     .main_app_idle_id = 0
 };
 
-
 static void cleanup() {
     event_sequence_destroy(&eventSequence);
     
-    int fd;
-    
     if(appState.inputDevice != NULL) {
-    
-        fd = libevdev_get_fd(appState.inputDevice);
         libevdev_free(appState.inputDevice);
         appState.inputDevice = NULL;
-        if(fd != -1) {
-            close(fd);
-        }
     }
     
     if(appState.uinputDevice != NULL) {
-    
-        fd = libevdev_uinput_get_fd(appState.uinputDevice);
         libevdev_uinput_destroy(appState.uinputDevice);
         appState.uinputDevice = NULL;
-        if(fd != -1) {
-            close(fd);
-        }
     }
 }
 
@@ -83,8 +70,13 @@ static int init_dev(int fd) {
             return -1;
         }
     } else {
+        
         appState.inputDevice = libevdev_new();
-    
+        if (!appState.inputDevice) {
+            perror("Failed to create input device");
+            return -1;
+        }
+        
         libevdev_set_name(appState.inputDevice, "Custom Device");
         
         ret = libevdev_enable_event_type(appState.inputDevice, EV_SYN);
@@ -127,11 +119,20 @@ void show_error_dialog(const char* title, const char* details) {
     gtk_alert_dialog_show(dialog, GTK_WINDOW(appState.window));
 }
 
+static void set_state(enum state);
+
+static void record_off() {
+    appState.state = STATE_IDLE;
+    gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: IDLE");
+    gtk_image_set_from_icon_name(GTK_IMAGE(appState.recordIcon), "media-record");
+}
+
 static void record_tick() {
+    
     static struct timespec lastEventTS = {.tv_sec = 0, .tv_nsec = 0};
     
     if(libevdev_get_fd(appState.inputDevice) == -1) {
-        appState.state = STATE_IDLE;
+        set_state(STATE_IDLE);
         return;
     }
     
@@ -145,12 +146,15 @@ static void record_tick() {
     if(ret != LIBEVDEV_READ_STATUS_SUCCESS) {
         errno = EAGAIN;
         perror("Failed reading the event input device");
+        set_state(STATE_IDLE);
         return;
     }
     
     struct timespec currentTS;
-    if(timespec_get(&currentTS, TIME_UTC) == 0) {
+    if(timespec_get(&currentTS, TIME_UTC) != TIME_UTC) {
         perror("Failed getting current time");
+        set_state(STATE_IDLE);
+        return;
     }
     
     if(eventSequence.tail != NULL) {
@@ -169,6 +173,7 @@ static void record_tick() {
     
     if(ret == -1) {
         perror("Failed saving the input event");
+        set_state(STATE_IDLE);
         return;
     }
     
@@ -176,13 +181,36 @@ static void record_tick() {
     
 }
 
+static void record_on() {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
+    appState.state = STATE_RECORDING;
+    gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: RECORDING");
+    gtk_image_set_from_icon_name(GTK_IMAGE(appState.recordIcon), "media-playback-stop");
+}
+
+static void play_off() {
+    appState.state = STATE_IDLE;
+    gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: IDLE");
+    gtk_image_set_from_icon_name(GTK_IMAGE(appState.playIcon), "media-playback-start");
+}
+
 static void play_tick() {
     
     static struct timespec lastEventTS = {0, 0};
     
+    static bool firstEvent = true;
+    
+    if (firstEvent) {
+        if (timespec_get(&lastEventTS, TIME_UTC) != TIME_UTC) {
+            perror("Failed getting current time");
+            set_state(STATE_IDLE);
+            return;
+        }
+        firstEvent = false;
+    }
+    
     if(libevdev_uinput_get_fd(appState.uinputDevice) == -1 || appState.playCurrentEvent == eventSequence.tail || eventSequence.head == NULL) {
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
-        appState.state = STATE_IDLE;
+        set_state(STATE_IDLE);
         return;
     }
     
@@ -191,8 +219,9 @@ static void play_tick() {
     }
     
     struct timespec currentTS;
-    if(timespec_get(&currentTS, TIME_UTC) == 0) {
+    if(timespec_get(&currentTS, TIME_UTC) != TIME_UTC) {
         perror("Failed getting current time");
+        set_state(STATE_IDLE);
         return;
     }
     
@@ -208,6 +237,11 @@ static void play_tick() {
         }
         timePast.tv_nsec = temp;
         
+        if(timePast.tv_sec > appState.playCurrentEvent->delay.tv_sec + 1) {
+            appState.playCurrentEvent = appState.playCurrentEvent->next_event;
+            return;
+        }
+        
         if(timePast.tv_sec < appState.playCurrentEvent->delay.tv_sec || 
             (timePast.tv_sec == appState.playCurrentEvent->delay.tv_sec && timePast.tv_nsec < appState.playCurrentEvent->delay.tv_nsec)) {
             return;
@@ -216,8 +250,10 @@ static void play_tick() {
     
     int ret = libevdev_uinput_write_event(appState.uinputDevice, appState.playCurrentEvent->event.type, appState.playCurrentEvent->event.code, appState.playCurrentEvent->event.value);
     
-    if(timespec_get(&currentTS, TIME_UTC) == 0) {
+    if(timespec_get(&currentTS, TIME_UTC) != TIME_UTC) {
         perror("Failed getting current time");
+        set_state(STATE_IDLE);
+        return;
     }
     
     lastEventTS = currentTS;
@@ -233,21 +269,37 @@ static void play_tick() {
     appState.playCurrentEvent = appState.playCurrentEvent->next_event;
 }
 
+static void play_on() {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.recordButton), FALSE);
+    appState.state = STATE_PLAYING;
+    gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: PLAYING"); 
+    gtk_image_set_from_icon_name(GTK_IMAGE(appState.playIcon), "media-playback-pause");
+}
+
+static void set_state(enum state state) {
+    if(state == appState.state) return;
+    
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), state == STATE_PLAYING);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.recordButton), state == STATE_RECORDING);
+    
+    appState.state = state;
+}
+
 static gboolean main_app_tick(gpointer user_data) {
     switch(appState.state) {
+        
         case STATE_IDLE:
-            gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: IDLE");
             break;
+            
         case STATE_RECORDING:
-            gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: RECORDING");
             record_tick();
             break;
+            
         case STATE_PLAYING:
-            gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: PLAYING");
             play_tick();
             break;
+            
         default:
-            gtk_label_set_label(GTK_LABEL(appState.stateLabel), "Current application state: UNKNOWN STATE");
             break;
     }
     
@@ -264,31 +316,18 @@ static void on_record_button_toggle(GtkWidget *button, gpointer user_data) {
     }
     
     if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button)) == TRUE) {
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
-        appState.state = STATE_RECORDING;
-        
-        gtk_image_set_from_icon_name(GTK_IMAGE(appState.recordIcon), "media-playback-stop");
-        gtk_image_set_from_icon_name(GTK_IMAGE(appState.playIcon), "media-playback-start");
+        record_on();
     } else {
-        appState.state = STATE_IDLE;
-        
-        gtk_image_set_from_icon_name(GTK_IMAGE(appState.recordIcon), "media-record");
+        record_off();
     }
     
 }
 
 static void on_play_button_toggle(GtkWidget *button, gpointer user_data) {
     if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button)) == TRUE) {
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.recordButton), FALSE);
-        appState.state = STATE_PLAYING;
-        
-        gtk_image_set_from_icon_name(GTK_IMAGE(appState.playIcon), "media-playback-pause");
-        gtk_image_set_from_icon_name(GTK_IMAGE(appState.recordIcon), "media-record");
-        fprintf(stderr, "\nStarted recalling the events\n");
+        play_on();
     } else {
-        appState.state = STATE_IDLE;
-        
-        gtk_image_set_from_icon_name(GTK_IMAGE(appState.playIcon), "media-playback-start");
+        play_off();
     }
     
 }
@@ -308,20 +347,17 @@ static void on_evdev_load_button(GtkWidget *button, gpointer user_data) {
 }
 
 static void on_clear_button(GtkWidget *button, gpointer user_data) {
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.recordButton), FALSE);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
+    set_state(STATE_IDLE);
     event_sequence_destroy(&eventSequence);
     event_sequence_init(&eventSequence);
-    
+    appState.playCurrentEvent = NULL;
 }
 
 static void on_reset_button(GtkWidget *button, gpointer user_data) {
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(appState.playButton), FALSE);
+    if(appState.state == STATE_PLAYING) set_state(STATE_IDLE);
     appState.playCurrentEvent = eventSequence.head;
-    if(appState.state == STATE_PLAYING) {
-        
-    }
 }
+
 
 static gboolean on_window_close(GtkWidget *window, gpointer user_data) {
     if(appState.main_app_idle_id != 0) g_source_remove(appState.main_app_idle_id);
@@ -368,8 +404,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 }
 
 void signal_handler(int sig) {
-    printf("Caught signal %d\n", sig);
-    cleanup();
+    const char msg[] = "Caught signal - exiting\n";
+    write(STDERR_FILENO, msg, sizeof(msg)-1);
     _exit(1);
 }
 
