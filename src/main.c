@@ -433,5 +433,7 @@ int main(int argc, char *argv[]) {
     
     cleanup();
     
+    event_sequence_destroy(&eventSequence);
+    
     return status;
 }
