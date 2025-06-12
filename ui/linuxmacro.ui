@@ -106,6 +106,7 @@
                         <property name="primary-icon-name">document-new</property>
                         <property name="primary-icon-tooltip-text">Enter the path of event device to read events from</property>
                         <property name="text">/dev/input/</property>
+                        <property name="tooltip-text">Enter the path of event device to read events from</property>
                       </object>
                     </child>
                     <child>
@@ -113,6 +114,7 @@
                         <child>
                           <object class="GtkCheckButton" id="evdev_grub_check_button">
                             <property name="label">Grab/Ungrab</property>
+                            <property name="tooltip-text">Grab/Ungrab input device(prevent other processes from using it)</property>
                           </object>
                         </child>
                         <child>
