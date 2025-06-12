@@ -122,19 +122,6 @@ static int init_dev(int fd) {
         return -1;
     }
     
-    if(appState.isGrabbed) {
-        ret = libevdev_grab(appState.inputDevice, LIBEVDEV_GRAB);
-    } else {
-        ret = libevdev_grab(appState.inputDevice, LIBEVDEV_UNGRAB);
-    }
-    
-    if(ret < 0) {
-        errno = -ret;
-        perror("Failed to Grab/Ungrab the input device");
-        show_error_dialog("Failed to Grab/Ungrab the input device", strerror(errno));
-        exit(EXIT_FAILURE);
-    }
-    
     return 0;
 }
 
@@ -352,7 +339,7 @@ static void on_play_button_toggle(GtkWidget *button, gpointer user_data) {
 }
 
 static void on_evdev_load_button(GtkWidget *button, gpointer user_data) {
-    int fd = open(gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(appState.evdevPathEntry))), O_RDONLY);
+    int fd = open(gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(appState.evdevPathEntry))), O_RDWR);
     if(fd == -1) {
         show_error_dialog("Failed loading the event input device. Didn't manage to open evdev file", strerror(errno));
         return;
@@ -361,6 +348,21 @@ static void on_evdev_load_button(GtkWidget *button, gpointer user_data) {
     if(init_dev(fd) == -1) {
         close(fd);
         show_error_dialog("Failed loading the event input device. Didn't manage to initialize input and uinput devices", strerror(errno));
+        return;
+    }
+    
+    int ret = 0;
+    
+    if(appState.isGrabbed) {
+        ret = libevdev_grab(appState.inputDevice, LIBEVDEV_GRAB);
+    } else {
+        ret = libevdev_grab(appState.inputDevice, LIBEVDEV_UNGRAB);
+    }
+    
+    if(ret < 0) {
+        errno = -ret;
+        perror("Failed to Grab/Ungrab the input device");
+        show_error_dialog("Failed to Grab/Ungrab the input device", strerror(errno));
         return;
     }
 }
@@ -390,7 +392,7 @@ static void on_grab_check_button_toggled(GtkWidget *button, gpointer user_data) 
         errno = -ret;
         perror("Failed to Grab/Ungrab the input device");
         show_error_dialog("Failed to Grab/Ungrab the input device", strerror(errno));
-        exit(EXIT_FAILURE);
+        return;
     }
     
 }
@@ -462,7 +464,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
     
-    GtkApplication *app = gtk_application_new("dev.allivka.linuxmacro", G_APPLICATION_DEFAULT_FLAGS);
+    GtkApplication *app = gtk_application_new("dev.allivka.evdevrecorder", G_APPLICATION_DEFAULT_FLAGS);
     
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
     
