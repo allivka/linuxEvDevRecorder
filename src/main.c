@@ -25,7 +25,11 @@ static struct {
     GtkWidget *recordIcon;
     GtkWidget *playIcon;
     
+    GtkWidget *grabCheckButton;
+    
     guint main_app_idle_id;
+    
+    bool isGrabbed;
     
 } appState = {
     .playCurrentEvent = NULL,
@@ -39,8 +43,18 @@ static struct {
     .playButton = NULL,
     .recordIcon = NULL,
     .playIcon = NULL,
-    .main_app_idle_id = 0
+    .grabCheckButton = NULL,
+    .main_app_idle_id = 0,
+    .isGrabbed = false,
 };
+
+static void show_error_dialog(const char* title, const char* details) {
+    GtkAlertDialog *dialog = gtk_alert_dialog_new(title);
+    
+    gtk_alert_dialog_set_detail(dialog, details);
+    gtk_alert_dialog_set_modal(dialog, TRUE);
+    gtk_alert_dialog_show(dialog, GTK_WINDOW(appState.window));
+}
 
 static void cleanup() {
     event_sequence_destroy(&eventSequence);
@@ -108,15 +122,20 @@ static int init_dev(int fd) {
         return -1;
     }
     
-    return 0;
-}
-
-void show_error_dialog(const char* title, const char* details) {
-    GtkAlertDialog *dialog = gtk_alert_dialog_new(title);
+    if(appState.isGrabbed) {
+        ret = libevdev_grab(appState.inputDevice, LIBEVDEV_GRAB);
+    } else {
+        ret = libevdev_grab(appState.inputDevice, LIBEVDEV_UNGRAB);
+    }
     
-    gtk_alert_dialog_set_detail(dialog, details);
-    gtk_alert_dialog_set_modal(dialog, TRUE);
-    gtk_alert_dialog_show(dialog, GTK_WINDOW(appState.window));
+    if(ret < 0) {
+        errno = -ret;
+        perror("Failed to Grab/Ungrab the input device");
+        show_error_dialog("Failed to Grab/Ungrab the input device", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    
+    return 0;
 }
 
 static void set_state(enum state);
@@ -358,6 +377,23 @@ static void on_reset_button(GtkWidget *button, gpointer user_data) {
     appState.playCurrentEvent = eventSequence.head;
 }
 
+static void on_grab_check_button_toggled(GtkWidget *button, gpointer user_data) {
+    appState.isGrabbed = gtk_check_button_get_active(GTK_CHECK_BUTTON(button));
+    int ret = 0;
+    if(appState.isGrabbed) {
+        ret = libevdev_grab(appState.inputDevice, LIBEVDEV_GRAB);
+    } else {
+        ret = libevdev_grab(appState.inputDevice, LIBEVDEV_UNGRAB);
+    }
+    
+    if(ret < 0) {
+        errno = -ret;
+        perror("Failed to Grab/Ungrab the input device");
+        show_error_dialog("Failed to Grab/Ungrab the input device", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    
+}
 
 static gboolean on_window_close(GtkWidget *window, gpointer user_data) {
     if(appState.main_app_idle_id != 0) g_source_remove(appState.main_app_idle_id);
@@ -369,7 +405,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     GtkBuilder *builder = gtk_builder_new_from_file("ui/linuxmacro.ui");
     
     if (!builder) {
-        g_error("Failed to load UI file.");
+        g_error("Failed to load UI file");
         return;
     }
     
@@ -395,6 +431,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     appState.evdevPathEntry = GTK_WIDGET(gtk_builder_get_object(builder, "evdev_path_entry"));
     
     g_signal_connect(GTK_WIDGET(gtk_builder_get_object(builder, "evdev_load_button")), "clicked", G_CALLBACK(on_evdev_load_button), NULL);
+    
+    appState.grabCheckButton = GTK_WIDGET(gtk_builder_get_object(builder, "evdev_grub_check_button"));
+    g_signal_connect(GTK_WIDGET(appState.grabCheckButton), "toggled", G_CALLBACK(on_grab_check_button_toggled), NULL);
     
     appState.main_app_idle_id =  g_idle_add(main_app_tick, NULL);
     

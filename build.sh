@@ -1,2 +1,2 @@
 #/bin/sh
-gcc -o macro src/main.c $(pkg-config --cflags --libs libevdev gtk4)
+gcc -o evdevrecorder src/main.c $(pkg-config --cflags --libs libevdev gtk4)

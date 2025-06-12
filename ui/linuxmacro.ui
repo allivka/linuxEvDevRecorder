@@ -95,20 +95,38 @@
             </child>
             <child>
               <object class="GtkBox" id="evdev_box">
+                <property name="margin-bottom">20</property>
                 <child>
-                  <object class="GtkEntry" id="evdev_path_entry">
-                    <property name="margin-bottom">20</property>
-                    <property name="placeholder-text">Event device file path</property>
-                    <property name="primary-icon-name">document-new</property>
-                    <property name="primary-icon-tooltip-text">Enter the path of event device to read events from</property>
-                    <property name="text">/dev/input/</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="evdev_load_button">
-                    <property name="icon-name">media-eject</property>
-                    <property name="margin-bottom">20</property>
-                    <property name="tooltip-text">Load event device as input device for events recording</property>
+                  <object class="GtkFlowBox">
+                    <property name="max-children-per-line">1</property>
+                    <property name="selection-mode">none</property>
+                    <child>
+                      <object class="GtkEntry" id="evdev_path_entry">
+                        <property name="placeholder-text">Event device file path</property>
+                        <property name="primary-icon-name">document-new</property>
+                        <property name="primary-icon-tooltip-text">Enter the path of event device to read events from</property>
+                        <property name="text">/dev/input/</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox" id="evdev_control_Box">
+                        <child>
+                          <object class="GtkCheckButton" id="evdev_grub_check_button">
+                            <property name="label">Grab/Ungrab</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="evdev_load_button">
+                            <property name="icon-name">media-eject</property>
+                            <property name="margin-start">40</property>
+                            <property name="tooltip-text">Load event device as input device for events recording</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkStack"/>
+                        </child>
+                      </object>
+                    </child>
                   </object>
                 </child>
                 <layout>
